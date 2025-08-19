@@ -115,27 +115,93 @@ if st.session_state["authentication_status"]:
                 key="data_editor_saf_final",
             )
 
-            # --- LÓGICA DE GUARDADO (VERSIÓN CON ALINEACIÓN FORZADA) ---
+            # --- LÓGICA DE GUARDADO (ESTRATEGIA DE MERGE) ---
             if st.button("💾 Guardar Cambios Realizados", type="primary"):
                 with st.spinner("Procesando y guardando cambios..."):
                     df_original_sesion = st.session_state["df_mostrado_al_usuario"]
 
-                    # ★★★ PASO 1: ALINEAR LOS DATAFRAMES ANTES DE COMPARAR ★★★
-                    # Esto previene el ValueError asegurando que las columnas y sus órdenes son idénticos.
-                    orden_columnas = df_original_sesion.columns.tolist()
-                    df_editado_alineado = edited_df[orden_columnas]
+                    # 1. IDENTIFICAR CAMBIOS USANDO MERGE
+                    # Preparamos los DFs para la fusión
+                    df_original_sesion["ID_SERVICIO"] = df_original_sesion[
+                        "ID_SERVICIO"
+                    ].astype(str)
+                    edited_df["ID_SERVICIO"] = edited_df["ID_SERVICIO"].astype(str)
 
-                    # 2. COMPARAR LOS DATAFRAMES ALINEADOS
-                    cambios_df = df_original_sesion.compare(df_editado_alineado)
+                    # Fusionamos ambos DFs, una fila que no haya cambiado tendrá sus columnas _x y _y iguales.
+                    df_merged = pd.merge(
+                        df_original_sesion,
+                        edited_df,
+                        on="ID_SERVICIO",
+                        how="outer",
+                        suffixes=("_original", "_editado"),
+                    )
 
-                    if not cambios_df.empty:
-                        indices_modificados = cambios_df.index.unique()
-                        filas_modificadas = df_editado_alineado.loc[indices_modificados]
+                    # 2. ENCONTRAR LAS FILAS MODIFICADAS
+                    # Una fila cambió si cualquiera de sus valores en las columnas editables es diferente.
+                    filas_modificadas = []
+                    for col in columnas_editables:
+                        # Comparamos la columna original con la editada
+                        diff = df_merged[
+                            df_merged[f"{col}_original"] != df_merged[f"{col}_editado"]
+                        ]
+                        filas_modificadas.extend(diff["ID_SERVICIO"].tolist())
+
+                    ids_modificados = list(
+                        set(filas_modificadas)
+                    )  # Obtenemos IDs únicos
+
+                    if ids_modificados:
+                        # 3. PROCEDER CON EL GUARDADO
+                        filas_para_guardar = edited_df[
+                            edited_df["ID_SERVICIO"].isin(ids_modificados)
+                        ].copy()
 
                         if (
-                            filas_modificadas["ESTADO"].isnull().any()
-                            or (filas_modificadas["ESTADO"] == "").any()
+                            filas_para_guardar["ESTADO"].isnull().any()
+                            or (filas_para_guardar["ESTADO"] == "").any()
                         ):
                             st.error(
-                                "❌ Error de validación: Se detectaron filas modificadas donde el campo 'ESTADO' está vacío. Por favor, complete todos los campos 'ESTADO' antes de guardar."
+                                "❌ Error de validación: Se detectaron filas modificadas donde 'ESTADO' está vacío. Complete todos los campos 'ESTADO' antes de guardar."
                             )
+                        else:
+                            filas_para_guardar["USUARIO_QUE_EDITO"] = username
+                            filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
+                                tz="America/Argentina/Buenos_Aires"
+                            ).strftime("%Y-%m-%d %H:%M:%S")
+
+                            df_ediciones_actuales = get_sheet_as_dataframe(
+                                spreadsheet, "EDICIONES_USUARIOS"
+                            )
+                            if not df_ediciones_actuales.empty:
+                                df_ediciones_actuales["ID_SERVICIO"] = (
+                                    df_ediciones_actuales["ID_SERVICIO"].astype(str)
+                                )
+
+                            df_ediciones_final = pd.concat(
+                                [df_ediciones_actuales, filas_para_guardar],
+                                ignore_index=True,
+                            ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
+
+                            success = update_sheet_from_dataframe(
+                                spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final
+                            )
+
+                            if success:
+                                st.success("✅ ¡Cambios guardados con éxito!")
+                                st.cache_data.clear()
+                                del st.session_state["df_mostrado_al_usuario"]
+                                st.rerun()
+                            else:
+                                st.error("❌ Ocurrió un error al guardar.")
+                    else:
+                        st.info("No se detectaron cambios para guardar.")
+        else:
+            st.error("No se encontraron datos en la hoja 'BD_CARGOS_COMPLETA'.")
+    else:
+        st.error("Falló la conexión con Google Sheets.")
+
+# --- Manejo de casos de autenticación fallida o pendiente ---
+elif st.session_state["authentication_status"] is False:
+    st.error("Usuario o contraseña incorrecto.")
+elif st.session_state["authentication_status"] is None:
+    st.warning("Por favor, ingrese su usuario y contraseña para continuar.")
