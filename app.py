@@ -191,7 +191,7 @@ if st.session_state["authentication_status"]:
                                 st.success("✅ ¡Cambios guardados con éxito!")
                                 st.cache_data.clear()
                                 del st.session_state.df_mostrado
-                                st.experimental_rerun()
+                                st.rerun()
                             else:
                                 st.error("❌ Ocurrió un error al guardar los cambios.")
                         else:
