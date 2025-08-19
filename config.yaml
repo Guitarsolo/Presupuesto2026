@@ -1,0 +1,21 @@
+credentials:
+  usernames:
+    mdiaz: # Este es el 'username' que usarán para iniciar sesión
+      email: tecnologia.mtprh@catamarca.gov.ar
+      name: Mariano Diaz # Nombre completo para mostrar
+      password: '$2b$12$UrUluWW4/iH48dFK6Qr2tub8oKELcRGBU19J6m05BC49MMS0TAAuy' # CONTRASEÑA TEMPORAL - LA CAMBIAREMOS EN EL SIGUIENTE PASO
+      
+      saf: 22 # ¡CAMPO PERSONALIZADO! Aquí guardamos el SAF de este usuario
+    brojo:
+      email: belendavidrojo@gmail.com
+      name: Belen David Rojo
+      password: 'def' # CONTRASEÑA TEMPORAL
+      saf: 22
+
+cookie:
+  expiry_days: 30
+  key: 'algun_string_secreto_aleatorio' # Clave para la cookie de sesión
+  name: 'cookie_presupuesto_app'
+
+preauthorized:
+  emails: []

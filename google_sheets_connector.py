@@ -11,7 +11,9 @@ def connect_to_gsheet():
     try:
         creds = st.secrets["gcp_service_account"]
         sa = gspread.service_account_from_dict(creds)
-        spreadsheet = sa.open("Control Presupuesto 2026")  # <-- VERIFICA ESTE NOMBRE
+        spreadsheet = sa.open(
+            "Python - Presupuesto 2026 - Registro Maestro"
+        )  # <-- VERIFICA ESTE NOMBRE
         return spreadsheet
     except Exception as e:
         st.error(f"Error al conectar con Google Sheets: {e}")
