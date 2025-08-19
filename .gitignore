@@ -15,6 +15,6 @@ __pycache__/
 # Archivos de configuración de VSCode (opcional pero recomendado)
 .vscode/
 
-# Archivos del sistema operativo que a veces se crean
+# Archivosgit push origin main del sistema operativo que a veces se crean
 .DS_Store
 Thumbs.db
