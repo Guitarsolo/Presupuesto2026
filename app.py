@@ -65,203 +65,219 @@ if st.session_state["authentication_status"]:
                 by=["Suborganizacion", "Documento"], ignore_index=True
             )
 
-            # --- RENDERIZADO DE LA INTERFAZ ---
+            # --- RENDERIZADO DE LA INTERFAZ CON PANELES DE EDICIÓN ---
             st.info(
-                "La siguiente tabla muestra la nómina de agentes de su SAF. Seleccione un agente del menú desplegable para editar su información."
+                "A continuación se lista la nómina de agentes. Haga clic en '✏️ Editar...' para desplegar el formulario de un agente específico."
             )
-
-            # Mostrar la tabla como de solo lectura (excepto el índice que es útil)
-            st.dataframe(df_a_mostrar, use_container_width=True, hide_index=True)
             st.divider()
 
-            # --- FORMULARIO DE EDICIÓN ---
-            # Crear una lista legible para que el usuario seleccione al agente
-            df_a_mostrar["display"] = (
-                df_a_mostrar["Nombres"]
-                + " (DNI: "
-                + df_a_mostrar["Documento"].astype(str)
-                + ")"
-            )
-            agente_seleccionado_display = st.selectbox(
-                "**Paso 1: Seleccione un agente para editar sus datos**",
-                options=["---"] + df_a_mostrar["display"].tolist(),
-                index=0,
-            )
+            # Guardar el DataFrame completo en el estado de la sesión para que esté disponible
+            st.session_state.df_a_mostrar = df_a_mostrar
 
-            if agente_seleccionado_display != "---":
-                # Encontrar la fila completa de datos del agente seleccionado
-                datos_agente = df_a_mostrar[
-                    df_a_mostrar["display"] == agente_seleccionado_display
-                ].iloc[0]
+            # Iterar sobre cada fila del DataFrame para crear un panel de edición
+            for index, datos_agente in st.session_state.df_a_mostrar.iterrows():
+                id_servicio = datos_agente["ID_SERVICIO"]
 
-                with st.form(key=f"form_{datos_agente['ID_SERVICIO']}"):
-                    st.subheader(f"📝 Editando a: {datos_agente['Nombres']}")
-                    st.write(
-                        "Complete o corrija los siguientes campos. Los campos marcados con * son obligatorios."
-                    )
+                # Mostrar información clave del agente en columnas
+                col1, col2, col3 = st.columns([2, 1.5, 3])
+                col1.metric("Nombre", datos_agente["Nombres"])
+                col2.metric("Documento", str(datos_agente["Documento"]))
+                col3.metric(
+                    "Suborganización (en SARHLIQ)", datos_agente["Suborganizacion"]
+                )
 
-                    # ---- RENDERIZAR CAMPOS DEL FORMULARIO ----
-                    # Leer listas de opciones desde la hoja PARAMS
-                    df_params = get_sheet_as_dataframe(spreadsheet, "PARAMETROS")
+                # Crear el Expansor que contiene el formulario de edición
+                with st.expander(f"✏️ Editar datos de {datos_agente['Nombres']}"):
 
-                    # Columna 1
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        # Campo ESTADO (obligatorio)
-                        estados_validos = df_params["ESTADOS_VALIDOS"].dropna().tolist()
-                        estado_actual = datos_agente.get("ESTADO")
-                        indice_estado = (
-                            estados_validos.index(estado_actual)
-                            if estado_actual in estados_validos
-                            else 0
-                        )
-                        nuevo_estado = st.selectbox(
-                            "ESTADO *", options=estados_validos, index=indice_estado
-                        )
+                    with st.form(key=f"form_{id_servicio}"):
+                        st.write("Complete o corrija los campos. * (obligatorio)")
 
-                        nuevo_adscripto = st.checkbox(
-                            "ADSCRIPTO A OTRO",
-                            value=bool(datos_agente.get("ADSCRIPTO A OTRO")),
-                        )
-                        nuevo_org_destino_adscripto = st.text_input(
-                            "ORGANISMO DESTINO DE ADSCRIPTO",
-                            value=datos_agente.get(
-                                "ORGANISMO DESTINO DE ADSCRIPTO", ""
-                            ),
-                        )
+                        df_params = get_sheet_as_dataframe(spreadsheet, "PARAMETROS")
 
-                        nuevo_subrogante = st.checkbox(
-                            "SITUACIÓN SUBROGANTE",
-                            value=bool(datos_agente.get("SITUACIÓN SUBROGANTE")),
-                        )
-                        categorias_validas = (
-                            df_params["CATEGORIAS_SUBROGANCIA"].dropna().tolist()
-                        )
-                        categoria_actual = datos_agente.get("CATEGORIA QUE SUBROGA")
-                        indice_cat = (
-                            categorias_validas.index(categoria_actual)
-                            if categoria_actual in categorias_validas
-                            else 0
-                        )
-                        nueva_cat_subroga = st.selectbox(
-                            "CATEGORIA QUE SUBROGA",
-                            options=categorias_validas,
-                            index=indice_cat,
-                        )
-
-                    with col2:
-                        nuevo_org_actualizado = st.text_input(
-                            "ORGANISMO ORIGEN ACTUALIZADO",
-                            value=datos_agente.get("ORGANISMO ORIGEN ACTUALIZADO", ""),
-                        )
-
-                        nuevo_afectado_a = st.checkbox(
-                            "AGENTE AFECTADO A OTRO",
-                            value=bool(datos_agente.get("AGENTE AFECTADO A OTRO")),
-                        )
-                        nuevo_org_destino_afectado = st.text_input(
-                            "ORGANISMO DESTINO DEL AGENTE AFECTADO",
-                            value=datos_agente.get(
-                                "ORGANISMO DESTINO DEL AGENTE AFECTADO", ""
-                            ),
-                        )
-
-                        nuevo_afectado_de = st.checkbox(
-                            "AGENTE AFECTADO DE OTRO",
-                            value=bool(datos_agente.get("AGENTE AFECTADO DE OTRO")),
-                        )
-                        nuevo_org_origen_afectado = st.text_input(
-                            "ORGANISMO ORIGEN DEL AGENTE AFECTADO (DE DONDE VIENE)",
-                            value=datos_agente.get(
-                                "ORGANISMO ORIGEN DEL AGENTE AFECTADO (DE DONDE VIENE)",
-                                "",
-                            ),
-                        )
-
-                        nuevo_retiro = st.checkbox(
-                            "ACOGIDO A RETIRO VOLUNTARIO",
-                            value=bool(datos_agente.get("ACOGIDO A RETIRO VOLUNTARIO")),
-                        )
-
-                    nuevo_acto_admin = st.text_area(
-                        "ACTO ADMINISTRATIVO",
-                        value=datos_agente.get("ACTO ADMINISTRATIVO", ""),
-                    )
-
-                    # Botón de guardado DENTRO del formulario
-                    submitted = st.form_submit_button(
-                        "💾 Guardar Cambios para este Agente"
-                    )
-
-                    if submitted:
-                        # --- LÓGICA DE GUARDADO (PARA UNA SOLA FILA) ---
-                        if not nuevo_estado:
-                            st.error(
-                                "El campo ESTADO es obligatorio. No se guardaron los cambios."
+                        form_col1, form_col2 = st.columns(2)
+                        with form_col1:
+                            estados_validos = (
+                                df_params["ESTADOS_VALIDOS"].dropna().tolist()
                             )
-                        else:
-                            with st.spinner("Guardando..."):
-                                # Crear un DataFrame de una sola fila con los datos originales
-                                fila_modificada = datos_agente.to_frame().T
+                            estado_actual = datos_agente.get("ESTADO")
+                            indice_estado = (
+                                estados_validos.index(estado_actual)
+                                if pd.notna(estado_actual)
+                                and estado_actual in estados_validos
+                                else 0
+                            )
+                            nuevo_estado = st.selectbox(
+                                "ESTADO *",
+                                options=estados_validos,
+                                index=indice_estado,
+                                key=f"estado_{id_servicio}",
+                            )
 
-                                # Actualizar la fila con los nuevos valores del formulario
-                                fila_modificada["ESTADO"] = nuevo_estado
-                                fila_modificada["ORGANISMO ORIGEN ACTUALIZADO"] = (
-                                    nuevo_org_actualizado
-                                )
-                                fila_modificada["ADSCRIPTO A OTRO"] = nuevo_adscripto
-                                fila_modificada["ORGANISMO DESTINO DE ADSCRIPTO"] = (
-                                    nuevo_org_destino_adscripto
-                                )
-                                fila_modificada["SITUACIÓN SUBROGANTE"] = (
-                                    nuevo_subrogante
-                                )
-                                fila_modificada["CATEGORIA QUE SUBROGA"] = (
-                                    nueva_cat_subroga
-                                )
-                                fila_modificada["AGENTE AFECTADO A OTRO"] = (
-                                    nuevo_afectado_a
-                                )
-                                fila_modificada[
-                                    "ORGANISMO DESTINO DEL AGENTE AFECTADO"
-                                ] = nuevo_org_destino_afectado
-                                fila_modificada["AGENTE AFECTADO DE OTRO"] = (
-                                    nuevo_afectado_de
-                                )
-                                fila_modificada[
-                                    "ORGANISMO ORIGEN DEL AGENTE AFECTADO (DE DONDE VIENE)"
-                                ] = nuevo_org_origen_afectado
-                                fila_modificada["ACOGIDO A RETIRO VOLUNTARIO"] = (
-                                    nuevo_retiro
-                                )
-                                fila_modificada["ACTO ADMINISTRATIVO"] = (
-                                    nuevo_acto_admin
-                                )
-                                fila_modificada["USUARIO_QUE_EDITO"] = username
-                                fila_modificada["FECHA_DE_EDICION"] = pd.Timestamp.now(
-                                    tz="America/Argentina/Buenos_Aires"
-                                ).strftime("%Y-%m-%d %H:%M:%S")
+                            nuevo_adscripto = st.checkbox(
+                                "ADSCRIPTO A OTRO",
+                                value=bool(datos_agente.get("ADSCRIPTO A OTRO")),
+                                key=f"adscripto_{id_servicio}",
+                            )
+                            nuevo_org_destino_adscripto = st.text_input(
+                                "ORGANISMO DESTINO DE ADSCRIPTO",
+                                value=datos_agente.get(
+                                    "ORGANISMO DESTINO DE ADSCRIPTO", ""
+                                ),
+                                key=f"org_dest_ads_{id_servicio}",
+                            )
 
-                                # Combinar con las ediciones existentes
-                                df_ediciones_final = pd.concat(
-                                    [df_ediciones, fila_modificada]
-                                ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
+                            nuevo_subrogante = st.checkbox(
+                                "SITUACIÓN SUBROGANTE",
+                                value=bool(datos_agente.get("SITUACIÓN SUBROGANTE")),
+                                key=f"subrogante_{id_servicio}",
+                            )
+                            categorias_validas = (
+                                df_params["CATEGORIAS_SUBROGANCIA"].dropna().tolist()
+                            )
+                            categoria_actual = datos_agente.get("CATEGORIA QUE SUBROGA")
+                            indice_cat = (
+                                categorias_validas.index(categoria_actual)
+                                if pd.notna(categoria_actual)
+                                and categoria_actual in categorias_validas
+                                else 0
+                            )
+                            nueva_cat_subroga = st.selectbox(
+                                "CATEGORIA QUE SUBROGA",
+                                options=categorias_validas,
+                                index=indice_cat,
+                                key=f"cat_sub_{id_servicio}",
+                            )
 
-                                # Guardar de vuelta en Google Sheets
-                                success = update_sheet_from_dataframe(
-                                    spreadsheet,
-                                    "EDICIONES_USUARIOS",
-                                    df_ediciones_final,
+                        with form_col2:
+                            nuevo_org_actualizado = st.text_input(
+                                "ORGANISMO ORIGEN ACTUALIZADO",
+                                value=datos_agente.get(
+                                    "ORGANISMO ORIGEN ACTUALIZADO", ""
+                                ),
+                                key=f"org_act_{id_servicio}",
+                            )
+
+                            nuevo_afectado_a = st.checkbox(
+                                "AGENTE AFECTADO A OTRO",
+                                value=bool(datos_agente.get("AGENTE AFECTADO A OTRO")),
+                                key=f"afectado_a_{id_servicio}",
+                            )
+                            nuevo_org_destino_afectado = st.text_input(
+                                "ORGANISMO DESTINO DEL AGENTE AFECTADO",
+                                value=datos_agente.get(
+                                    "ORGANISMO DESTINO DEL AGENTE AFECTADO", ""
+                                ),
+                                key=f"org_dest_afe_{id_servicio}",
+                            )
+
+                            nuevo_afectado_de = st.checkbox(
+                                "AGENTE AFECTADO DE OTRO",
+                                value=bool(datos_agente.get("AGENTE AFECTADO DE OTRO")),
+                                key=f"afectado_de_{id_servicio}",
+                            )
+                            nuevo_org_origen_afectado = st.text_input(
+                                "ORGANISMO ORIGEN DEL AGENTE AFECTADO (DE DONDE VIENE)",
+                                value=datos_agente.get(
+                                    "ORGANISMO ORIGEN DEL AGENTE AFECTADO (DE DONDE VIENE)",
+                                    "",
+                                ),
+                                key=f"org_ori_afe_{id_servicio}",
+                            )
+
+                            nuevo_retiro = st.checkbox(
+                                "ACOGIDO A RETIRO VOLUNTARIO",
+                                value=bool(
+                                    datos_agente.get("ACOGIDO A RETIRO VOLUNTARIO")
+                                ),
+                                key=f"retiro_{id_servicio}",
+                            )
+
+                        nuevo_acto_admin = st.text_area(
+                            "ACTO ADMINISTRATIVO",
+                            value=datos_agente.get("ACTO ADMINISTRATIVO", ""),
+                            key=f"acto_{id_servicio}",
+                        )
+
+                        submitted = st.form_submit_button(
+                            "💾 Guardar Cambios para este Agente"
+                        )
+
+                        if submitted:
+                            if not nuevo_estado or nuevo_estado == "":
+                                st.error(
+                                    "El campo ESTADO es obligatorio. No se guardaron los cambios."
                                 )
+                            else:
+                                with st.spinner("Guardando..."):
+                                    # La lógica de guardado es idéntica a la del selectbox
+                                    fila_modificada = datos_agente.to_frame().T
 
-                                if success:
-                                    st.success(
-                                        f"¡Datos de {datos_agente['Nombres']} guardados con éxito!"
+                                    # Actualizar la fila con los nuevos valores del formulario
+                                    fila_modificada["ESTADO"] = nuevo_estado
+                                    fila_modificada["ORGANISMO ORIGEN ACTUALIZADO"] = (
+                                        nuevo_org_actualizado
                                     )
-                                    st.cache_data.clear()  # Limpiar caché para forzar la recarga
-                                    st.rerun()
-                                else:
-                                    st.error("❌ Ocurrió un error al guardar.")
+                                    fila_modificada["ADSCRIPTO A OTRO"] = (
+                                        nuevo_adscripto
+                                    )
+                                    fila_modificada[
+                                        "ORGANISMO DESTINO DE ADSCRIPTO"
+                                    ] = nuevo_org_destino_adscripto
+                                    fila_modificada["SITUACIÓN SUBROGANTE"] = (
+                                        nuevo_subrogante
+                                    )
+                                    fila_modificada["CATEGORIA QUE SUBROGA"] = (
+                                        nueva_cat_subroga
+                                    )
+                                    fila_modificada["AGENTE AFECTADO A OTRO"] = (
+                                        nuevo_afectado_a
+                                    )
+                                    fila_modificada[
+                                        "ORGANISMO DESTINO DEL AGENTE AFECTADO"
+                                    ] = nuevo_org_destino_afectado
+                                    fila_modificada["AGENTE AFECTADO DE OTRO"] = (
+                                        nuevo_afectado_de
+                                    )
+                                    fila_modificada[
+                                        "ORGANISMO ORIGEN DEL AGENTE AFECTADO (DE DONDE VIENE)"
+                                    ] = nuevo_org_origen_afectado
+                                    fila_modificada["ACOGIDO A RETIRO VOLUNTARIO"] = (
+                                        nuevo_retiro
+                                    )
+                                    fila_modificada["ACTO ADMINISTRATIVO"] = (
+                                        nuevo_acto_admin
+                                    )
+                                    fila_modificada["USUARIO_QUE_EDITO"] = username
+                                    fila_modificada["FECHA_DE_EDICION"] = (
+                                        pd.Timestamp.now(
+                                            tz="America/Argentina/Buenos_Aires"
+                                        ).strftime("%Y-%m-%d %H:%M:%S")
+                                    )
+
+                                    # Combinar y guardar
+                                    df_ediciones_final = pd.concat(
+                                        [df_ediciones, fila_modificada],
+                                        ignore_index=True,
+                                    ).drop_duplicates(
+                                        subset=["ID_SERVICIO"], keep="last"
+                                    )
+
+                                    success = update_sheet_from_dataframe(
+                                        spreadsheet,
+                                        "EDICIONES_USUARIOS",
+                                        df_ediciones_final,
+                                    )
+
+                                    if success:
+                                        st.success(
+                                            f"¡Datos de {datos_agente['Nombres']} guardados!"
+                                        )
+                                        st.cache_data.clear()
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Ocurrió un error al guardar.")
+                st.divider()
+
         else:
             st.error("No se encontraron datos en la hoja 'BD_CARGOS_COMPLETA'.")
     else:
