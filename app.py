@@ -71,7 +71,7 @@ if st.session_state["authentication_status"]:
             # Columnas bloqueadas de la base original
             columnas_bloqueadas = [
                 "Documento", "Nombres", "Suborganizacion", "ID_SERVICIO", "cargo", 
-                "Agrupamiento", "SituacionRevista", "funcion", "SituacionLaboral", 
+                "Agrupamiento", "SituacionRevista", "FUNCION", "SituacionLaboral", 
                 "FORMULARIOS_F4"
             ]
             
@@ -92,57 +92,74 @@ if st.session_state["authentication_status"]:
                 if col not in df_a_mostrar.columns:
                     df_a_mostrar[col] = pd.NA # Usar NA de pandas para valores nulos
 
-            # --- RENDERIZADO DEL EDITOR DE DATOS ---
-            st.info("A continuación, puede modificar los datos. Los cambios se guardarán por separado sin alterar la base original.")
-            
-            # Guardamos el estado original (mostrado) para la comparación
-            if 'df_mostrado' not in st.session_state:
-                st.session_state.df_mostrado = df_a_mostrar
-            
-            edited_df = st.data_editor(
-                df_a_mostrar[columnas_visibles],
-                disabled=columnas_bloqueadas,
-                num_rows="dynamic",
-                key="data_editor_final"
-            )
-            
-            # --- NUEVA LÓGICA DE GUARDADO ---
-            if st.button("💾 Guardar Cambios", type="primary"):
-                with st.spinner("Comparando cambios y guardando..."):
-                    original_mostrado = st.session_state.df_mostrado
-                    
-                    # Comparar para encontrar solo las filas que han cambiado
-                    cambios = original_mostrado.compare(edited_df)
-                    
-                    if not cambios.empty:
-                        # Obtener los ID_SERVICIO de las filas que cambiaron
-                        ids_modificados = cambios.index.get_level_values('ID_SERVICIO')
-                        
-                        # Seleccionar las filas completas y actualizadas desde el dataframe editado
-                        filas_para_guardar = edited_df[edited_df['ID_SERVICIO'].isin(ids_modificados)]
-                        
-                        # Preparar las filas para guardar: seleccionar solo las columnas de 'EDICIONES_USUARIOS'
-                        columnas_para_guardar = [col for col in df_ediciones.columns if col in filas_para_guardar.columns]
-                        df_a_guardar = filas_para_guardar[columnas_para_guardar].copy()
+                        # --- RENDERIZADO DE LA INTERFAZ CON PESTAÑAS ---
+            st.info("Utilice la tabla a continuación para editar los datos. Los cambios se guardarán al presionar el botón.")
 
-                        # Añadir la trazabilidad
-                        df_a_guardar['USUARIO_QUE_EDITO'] = username
-                        df_a_guardar['FECHA_DE_EDICION'] = pd.Timestamp.now()
-                        
-                        # --- Escribir de vuelta en la hoja de EDICIONES ---
-                        # Combina ediciones existentes con las nuevas y elimina duplicados
-                        df_ediciones_final = pd.concat([df_ediciones.set_index('ID_SERVICIO'), df_a_guardar.set_index('ID_SERVICIO')]).reset_index()
-                        df_ediciones_final.drop_duplicates(subset=['ID_SERVICIO'], keep='last', inplace=True)
-                        
-                        success = update_sheet_from_dataframe(spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final)
+            # Crear pestañas para organizar la vista
+            tab1, tab2 = st.tabs(["📝 Planilla de Trabajo Principal", "📄 Instrucciones"])
 
-                        if success:
-                            st.success("✅ ¡Cambios guardados con éxito!")
-                            del st.session_state.df_mostrado # Forzar recarga de datos en el próximo rerun
-                            st.experimental_rerun()
+            with tab1:
+                st.write("### Agentes del SAF")
+                
+                edited_df = st.data_editor(
+                    df_a_mostrar[columnas_visibles],
+                    key="data_editor_final",
+                    use_container_width=True, # <-- Clave para usar todo el ancho
+                    height=600,
+                    disabled=columnas_bloqueadas
+                )
+                
+                st.write("") # Espacio
+                
+                # --- BOTÓN Y LÓGICA DE GUARDADO (Ahora visible y funcional) ---
+                if st.button("💾 Guardar Cambios Realizados", type="primary"):
+                    with st.spinner("Comparando y guardando los cambios..."):
+                        # (La lógica de guardado que ya teníamos va aquí, sin cambios)
+                        df_ediciones_actuales = get_sheet_as_dataframe(spreadsheet, "EDICIONES_USUARIOS")
+                        if not df_ediciones_actuales.empty:
+                            df_ediciones_actuales['ID_SERVICIO'] = df_ediciones_actuales['ID_SERVICIO'].astype(str)
+
+                        # Comparar el DF mostrado original con el editado
+                        original_df = st.session_state.get('df_mostrado', pd.DataFrame())
+                        
+                        # Convertir tipos antes de comparar para evitar errores
+                        edited_df['ID_SERVICIO'] = edited_df['ID_SERVICIO'].astype(str)
+                        original_df['ID_SERVICIO'] = original_df['ID_SERVICIO'].astype(str)
+                        
+                        # Usar 'ID_SERVICIO' como índice para una comparación robusta
+                        original_indexed = original_df.set_index('ID_SERVICIO')
+                        edited_indexed = edited_df.set_index('ID_SERVICIO')
+                        
+                        # Encontrar los índices donde hay diferencias
+                        diff_indices = original_indexed.ne(edited_indexed).any(axis=1)
+                        filas_modificadas = edited_df[edited_df['ID_SERVICIO'].isin(diff_indices[diff_indices].index)]
+
+                        if not filas_modificadas.empty:
+                            columnas_para_guardar = [col for col in df_ediciones.columns if col in filas_modificadas.columns]
+                            df_a_guardar = filas_modificadas[columnas_para_guardar].copy()
+                            
+                            df_a_guardar['USUARIO_QUE_EDITO'] = username
+                            df_a_guardar['FECHA_DE_EDICION'] = pd.Timestamp.now(tz="America/Argentina/Buenos_Aires") # O tu zona horaria
+                            
+                            df_ediciones_final = pd.concat([df_ediciones_actuales, df_a_guardar]).drop_duplicates(subset=['ID_SERVICIO'], keep='last')
+                            
+                            success = update_sheet_from_dataframe(spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final)
+
+                            if success:
+                                st.success("✅ ¡Cambios guardados con éxito!")
+                                st.experimental_rerun()
+                            else:
+                                st.error("❌ Ocurrió un error al guardar.")
                         else:
-                            st.error("❌ Ocurrió un error al guardar los cambios.")
-                    else:
-                        st.info("No se detectaron cambios para guardar.")
+                            st.info("No se detectaron cambios para guardar.")
+
+            with tab2:
+                st.write("### Guía de Uso")
+                st.markdown("""
+                - **Edición:** Haga doble clic en cualquier celda de la sección derecha (azul claro) para editar su contenido.
+                - **Guardado:** Una vez que haya finalizado todas sus modificaciones, haga clic en el botón azul **"Guardar Cambios Realizados"**.
+                - **Trazabilidad:** Cada vez que guarde, su usuario y la fecha quedarán registrados automáticamente.
+                - **Adscriptos de Otros:** Utilice el menú `➕ Cargar Adscripto DE Otro Organismo` en la parte superior para registrar agentes que no pertenecen a su planta pero prestan servicios en su SAF.
+                """)
 else:
     # ... (código de login como antes)
