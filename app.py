@@ -116,25 +116,45 @@ if st.session_state["authentication_status"]:
                 key="data_editor_saf",
             )
 
+            # --- LÓGICA DE GUARDADO (VERSIÓN CON ALINEACIÓN FORZADA) ---
             if st.button("💾 Guardar Cambios Realizados", type="primary"):
                 with st.spinner("Procesando y guardando cambios..."):
                     df_original_sesion = st.session_state["df_mostrado_al_usuario"]
+                    df_editado = edited_df  # Viene del data_editor
 
-                    cambios = df_original_sesion.compare(edited_df)
+                    # ★★★ PASO 1: ALINEAR LOS DATAFRAMES ★★★
+                    # Guardamos el orden de columnas original que se mostró al usuario
+                    orden_columnas_original = df_original_sesion.columns.tolist()
+
+                    # Forzamos que el dataframe editado tenga exactamente el mismo orden de columnas
+                    df_editado_alineado = df_editado[orden_columnas_original]
+
+                    # --- El resto de la lógica continúa desde aquí ---
+
+                    # 2. IDENTIFICAR CAMBIOS
+                    # Ahora que están alineados, la comparación funcionará
+                    cambios = df_original_sesion.compare(df_editado_alineado)
 
                     if not cambios.empty:
-                        ids_modificados = cambios.index.tolist()
-                        filas_modificadas = edited_df.iloc[ids_modificados].copy()
+                        # 3. OBTENER FILAS COMPLETAS
+                        # Obtenemos los índices (posiciones numéricas de fila) de los cambios
+                        indices_modificados = cambios.index.tolist()
+                        filas_modificadas = df_editado_alineado.iloc[
+                            indices_modificados
+                        ].copy()
 
+                        # 4. AÑADIR TRAZABILIDAD
                         filas_modificadas["USUARIO_QUE_EDITO"] = username
                         filas_modificadas["FECHA_DE_EDICION"] = pd.Timestamp.now(
                             tz="America/Argentina/Buenos_Aires"
                         ).strftime("%Y-%m-%d %H:%M:%S")
 
+                        # 5. ACTUALIZAR EL REGISTRO DE EDICIONES
                         df_ediciones_actuales = get_sheet_as_dataframe(
                             spreadsheet, "EDICIONES_USUARIOS"
                         )
 
+                        # ... (el resto de tu lógica de concatenar, dropear duplicados y guardar es correcta)
                         if not df_ediciones_actuales.empty:
                             df_ediciones_actuales["ID_SERVICIO"] = (
                                 df_ediciones_actuales["ID_SERVICIO"].astype(str)
@@ -144,7 +164,8 @@ if st.session_state["authentication_status"]:
                         ].astype(str)
 
                         df_ediciones_final = pd.concat(
-                            [df_ediciones_actuales, filas_modificadas]
+                            [df_ediciones_actuales, filas_modificadas],
+                            ignore_index=True,
                         ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
 
                         success = update_sheet_from_dataframe(
