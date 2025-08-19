@@ -118,11 +118,84 @@ if st.session_state["authentication_status"]:
 
                 st.write("")
 
+                # --- BOTÓN Y LÓGICA DE GUARDADO (VERSIÓN FINAL Y FUNCIONAL) ---
                 if st.button("💾 Guardar Cambios Realizados", type="primary"):
                     with st.spinner("Comparando y guardando los cambios..."):
-                        # ... (Tu lógica de guardado, que parece correcta, iría aquí)
-                        # ... Para ser concisos, la dejamos como la tenías.
-                        st.success("Guardado (lógica placeholder)")
+
+                        # Obtener el dataframe editado por el usuario
+                        edited_df_from_editor = (
+                            edited_df  # Este ya lo tenemos del st.data_editor
+                        )
+
+                        # Obtener el dataframe original que se mostró al inicio, desde el estado de la sesión
+                        original_df_mostrado = st.session_state.df_mostrado
+
+                        # --- Identificar las filas que realmente cambiaron ---
+                        # Comparamos el original con el editado. 'compare' es ideal para esto.
+                        # Necesitamos un índice único para comparar, usamos ID_SERVICIO.
+                        original_indexed = original_df_mostrado.set_index("ID_SERVICIO")
+                        edited_indexed = edited_df_from_editor.set_index("ID_SERVICIO")
+
+                        # alineamos las columnas para una comparación justa
+                        shared_columns = [
+                            col
+                            for col in original_indexed.columns
+                            if col in edited_indexed.columns
+                        ]
+                        diff = original_indexed[shared_columns].compare(
+                            edited_indexed[shared_columns]
+                        )
+
+                        if not diff.empty:
+                            # Obtenemos los 'ID_SERVICIO' de las filas que tienen diferencias
+                            ids_modificados = diff.index.unique().tolist()
+
+                            # Seleccionamos las filas completas y actualizadas desde el dataframe editado
+                            filas_para_guardar = edited_df_from_editor[
+                                edited_df_from_editor["ID_SERVICIO"].isin(
+                                    ids_modificados
+                                )
+                            ]
+
+                            # Seleccionar solo las columnas que existen en la hoja 'EDICIONES_USUARIOS'
+                            columnas_ediciones = df_ediciones.columns.tolist()
+                            columnas_para_guardar_final = [
+                                col
+                                for col in columnas_ediciones
+                                if col in filas_para_guardar.columns
+                            ]
+                            df_a_guardar = filas_para_guardar[
+                                columnas_para_guardar_final
+                            ].copy()
+
+                            # Añadir la trazabilidad
+                            df_a_guardar["USUARIO_QUE_EDITO"] = username
+                            df_a_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
+                                tz="America/Argentina/Buenos_Aires"
+                            ).strftime("%Y-%m-%d %H:%M:%S")
+
+                            # --- Escribir de vuelta en la hoja de EDICIONES ---
+                            # Combina ediciones existentes (de otros usuarios/sesiones) con las nuevas
+                            df_ediciones_final = pd.concat(
+                                [df_ediciones, df_a_guardar]
+                            ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
+
+                            success = update_sheet_from_dataframe(
+                                spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final
+                            )
+
+                            if success:
+                                st.success("✅ ¡Cambios guardados con éxito!")
+                                # Limpiar la caché y el estado para forzar una recarga completa de datos
+                                st.cache_data.clear()
+                                del st.session_state.df_mostrado
+                                st.experimental_rerun()
+                            else:
+                                st.error(
+                                    "❌ Ocurrió un error al guardar los cambios en Google Sheets."
+                                )
+                        else:
+                            st.info("No se detectaron cambios para guardar.")
 
             with tab2:
                 st.write("### Guía de Uso")
