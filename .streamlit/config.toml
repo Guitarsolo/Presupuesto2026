@@ -1,0 +1,18 @@
+# Archivo de configuración de la apariencia de la App
+
+[theme]
+
+# Color de acento principal para widgets interactivos
+primaryColor = "#0057DC"
+
+# Color de fondo principal
+backgroundColor = "#FFFFFF"
+
+# Color de fondo para elementos como la barra lateral
+secondaryBackgroundColor = "#F0F2F6"
+
+# Color del texto
+textColor = "#000000"
+
+# (Opcional) Fuente a usar
+# font = "sans serif"
