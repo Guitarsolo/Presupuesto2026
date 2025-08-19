@@ -124,33 +124,47 @@ if st.session_state["authentication_status"]:
                 key="data_editor_saf_final",
             )
 
-            # --- LÓGICA DE GUARDADO (VERSIÓN FINAL Y ROBUSTA) ---
+            # --- LÓGICA DE GUARDADO (VERSIÓN FINAL CON COMPARACIÓN PRECISA) ---
             if st.button("💾 Guardar Cambios Realizados", type="primary"):
                 with st.spinner("Procesando y guardando cambios..."):
                     df_original_sesion = st.session_state["df_mostrado_al_usuario"]
+                    df_editado = edited_df
 
-                    # 1. IDENTIFICAR FILAS MODIFICADAS - MÉTODO MANUAL ROBUSTO
+                    # 1. IDENTIFICAR FILAS MODIFICADAS (MÉTODO PRECISO)
                     indices_modificados = []
-                    # Iterar por los índices numéricos de las filas
-                    for i in range(len(edited_df)):
-                        # Comparamos las dos filas como listas de valores
-                        if not df_original_sesion.iloc[i].equals(edited_df.iloc[i]):
-                            indices_modificados.append(i)
+                    # Iterar solo sobre las columnas que el usuario puede editar
+                    for col in columnas_editables:
+                        # Comparamos cada columna editable una por una
+                        # .fillna('') convierte todos los tipos de nulos a un string vacío para una comparación justa
+                        if (
+                            not df_original_sesion[col]
+                            .fillna("")
+                            .equals(df_editado[col].fillna(""))
+                        ):
+                            # Si la columna tiene cambios, encontramos los índices de las filas que cambiaron
+                            diff_indices = df_original_sesion[
+                                df_original_sesion[col].fillna("")
+                                != df_editado[col].fillna("")
+                            ].index
+                            indices_modificados.extend(diff_indices)
 
-                    if indices_modificados:
-                        filas_modificadas = edited_df.iloc[indices_modificados].copy()
+                    # Obtenemos una lista única de índices de filas modificadas
+                    indices_unicos = sorted(list(set(indices_modificados)))
 
-                        # 2. VALIDACIÓN
+                    if indices_unicos:
+                        filas_modificadas = df_editado.iloc[indices_unicos].copy()
+
+                        # 2. VALIDACIÓN PRECISA
+                        # Comprobar si en alguna de las filas realmente modificadas, el ESTADO está vacío
                         if (
                             filas_modificadas["ESTADO"].isnull().any()
                             or (filas_modificadas["ESTADO"] == "").any()
                         ):
                             st.error(
-                                "❌ Error de validación: Se detectaron filas modificadas con 'ESTADO' vacío."
+                                "❌ Error de validación: Se detectaron filas modificadas donde el campo 'ESTADO' está vacío. Por favor, complete todos los campos 'ESTADO' de las filas que ha editado antes de guardar."
                             )
                         else:
-                            # 3. PREPARAR DATOS PARA GUARDAR
-                            # Mantener todas las columnas (bloqueadas y editadas) como pediste
+                            # 3. PROCEDER CON EL GUARDADO
                             filas_para_guardar = filas_modificadas
 
                             filas_para_guardar["USUARIO_QUE_EDITO"] = username
@@ -169,13 +183,14 @@ if st.session_state["authentication_status"]:
 
                             filas_para_guardar = filas_para_guardar.astype(str)
 
-                            # Combinar y actualizar
                             df_ediciones_final = pd.concat(
                                 [df_ediciones_actuales, filas_para_guardar],
                                 ignore_index=True,
                             ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
 
-                            # Asegurar el orden de columnas antes de escribir
+                            columnas_hoja_ediciones = spreadsheet.worksheet(
+                                "EDICIONES_USUARIOS"
+                            ).row_values(1)
                             df_ediciones_final = df_ediciones_final.reindex(
                                 columns=columnas_hoja_ediciones
                             )
