@@ -39,6 +39,7 @@ if st.session_state["authentication_status"]:
 
     spreadsheet = connect_to_gsheet()
     if spreadsheet:
+        # --- LECTURA Y PREPARACIÓN DE DATOS ---
         df_original = get_sheet_as_dataframe(spreadsheet, "BD_CARGOS_COMPLETA")
         df_ediciones = get_sheet_as_dataframe(spreadsheet, "EDICIONES_USUARIOS")
 
@@ -55,7 +56,9 @@ if st.session_state["authentication_status"]:
             if not df_ediciones.empty:
                 df_ediciones["ID_SERVICIO"] = df_ediciones["ID_SERVICIO"].astype(str)
                 df_a_mostrar = df_a_mostrar.set_index("ID_SERVICIO")
-                df_ediciones_filtradas = df_ediciones.set_index("ID_SERVICIO")
+                df_ediciones_filtradas = df_ediciones[
+                    df_ediciones["SAF"] == user_saf
+                ].set_index("ID_SERVICIO")
                 df_a_mostrar.update(df_ediciones_filtradas)
                 df_a_mostrar.reset_index(inplace=True)
 
@@ -91,32 +94,22 @@ if st.session_state["authentication_status"]:
                 "ACTO ADMINISTRATIVO",
             ]
 
-            # --- Cargar la estructura de columnas de la hoja de destino ---
-            try:
-                columnas_hoja_ediciones = spreadsheet.worksheet(
-                    "EDICIONES_USUARIOS"
-                ).row_values(1)
-            except gspread.exceptions.WorksheetNotFound:
-                st.error(
-                    "Error Crítico: La hoja 'EDICIONES_USUARIOS' no se encontró. No se podrán guardar los cambios."
-                )
-                columnas_hoja_ediciones = []  # Prevenir fallos posteriores
-
             columnas_visibles = columnas_bloqueadas + columnas_editables
             for col in columnas_visibles:
                 if col not in df_a_mostrar.columns:
                     df_a_mostrar[col] = pd.NA
 
-            # --- RENDERIZADO ---
+            # --- RENDERIZADO DE LA INTERFAZ ---
             st.info(
                 "Edite directamente en la tabla. El campo 'ESTADO' es obligatorio al modificar una fila."
             )
 
-            if "df_mostrado_al_usuario" not in st.session_state:
-                st.session_state["df_mostrado_al_usuario"] = df_a_mostrar.copy()
+            # Usamos una clave de sesión diferente para evitar conflictos
+            if "df_para_editar" not in st.session_state:
+                st.session_state.df_para_editar = df_a_mostrar.copy()
 
             edited_df = st.data_editor(
-                df_a_mostrar[columnas_visibles],
+                st.session_state.df_para_editar,
                 disabled=columnas_bloqueadas,
                 num_rows="fixed",
                 use_container_width=True,
@@ -124,76 +117,56 @@ if st.session_state["authentication_status"]:
                 key="data_editor_saf_final",
             )
 
-            # --- LÓGICA DE GUARDADO (VERSIÓN FINAL CON COMPARACIÓN PRECISA) ---
+            # --- LÓGICA DE GUARDADO (REESTRUCTURADA) ---
             if st.button("💾 Guardar Cambios Realizados", type="primary"):
                 with st.spinner("Procesando y guardando cambios..."):
-                    df_original_sesion = st.session_state["df_mostrado_al_usuario"]
-                    df_editado = edited_df
 
-                    # 1. IDENTIFICAR FILAS MODIFICADAS (MÉTODO PRECISO)
-                    indices_modificados = []
-                    # Iterar solo sobre las columnas que el usuario puede editar
-                    for col in columnas_editables:
-                        # Comparamos cada columna editable una por una
-                        # .fillna('') convierte todos los tipos de nulos a un string vacío para una comparación justa
-                        if (
-                            not df_original_sesion[col]
-                            .fillna("")
-                            .equals(df_editado[col].fillna(""))
-                        ):
-                            # Si la columna tiene cambios, encontramos los índices de las filas que cambiaron
-                            diff_indices = df_original_sesion[
-                                df_original_sesion[col].fillna("")
-                                != df_editado[col].fillna("")
-                            ].index
-                            indices_modificados.extend(diff_indices)
+                    # 1. IDENTIFICAR FILAS MODIFICADAS
+                    # Comparamos la copia guardada en la sesión con la versión editada
+                    diferencias = st.session_state.df_para_editar.compare(edited_df)
 
-                    # Obtenemos una lista única de índices de filas modificadas
-                    indices_unicos = sorted(list(set(indices_modificados)))
+                    if not diferencias.empty:
+                        # 2. OBTENER SÓLO LOS IDs ÚNICOS DE LAS FILAS QUE CAMBIARON
+                        ids_modificados = diferencias.index.unique().tolist()
+                        filas_modificadas = edited_df.iloc[ids_modificados].copy()
 
-                    if indices_unicos:
-                        filas_modificadas = df_editado.iloc[indices_unicos].copy()
-
-                        # 2. VALIDACIÓN PRECISA
-                        # Comprobar si en alguna de las filas realmente modificadas, el ESTADO está vacío
+                        # 3. VALIDACIÓN
                         if (
                             filas_modificadas["ESTADO"].isnull().any()
                             or (filas_modificadas["ESTADO"] == "").any()
                         ):
                             st.error(
-                                "❌ Error de validación: Se detectaron filas modificadas donde el campo 'ESTADO' está vacío. Por favor, complete todos los campos 'ESTADO' de las filas que ha editado antes de guardar."
+                                "❌ Error de validación: Se detectaron filas modificadas con 'ESTADO' vacío."
                             )
                         else:
-                            # 3. PROCEDER CON EL GUARDADO
+                            # 4. PREPARAR DATOS PARA GUARDAR
+                            # Tomamos las filas completas que cambiaron y añadimos trazabilidad
                             filas_para_guardar = filas_modificadas
-
                             filas_para_guardar["USUARIO_QUE_EDITO"] = username
                             filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
                                 tz="America/Argentina/Buenos_Aires"
                             ).strftime("%Y-%m-%d %H:%M:%S")
 
-                            # 4. ACTUALIZAR EL REGISTRO
+                            # 5. ACTUALIZAR EL REGISTRO MAESTRO DE EDICIONES
+                            # Leemos la versión más reciente de la hoja de ediciones
                             df_ediciones_actuales = get_sheet_as_dataframe(
                                 spreadsheet, "EDICIONES_USUARIOS"
                             )
+
+                            # Aseguramos el tipo de dato de la clave de unión
                             if not df_ediciones_actuales.empty:
-                                df_ediciones_actuales = df_ediciones_actuales.astype(
-                                    str
+                                df_ediciones_actuales["ID_SERVICIO"] = (
+                                    df_ediciones_actuales["ID_SERVICIO"].astype(str)
                                 )
+                            filas_para_guardar["ID_SERVICIO"] = filas_para_guardar[
+                                "ID_SERVICIO"
+                            ].astype(str)
 
-                            filas_para_guardar = filas_para_guardar.astype(str)
-
+                            # Fusionamos: añadimos las nuevas ediciones y actualizamos las existentes
                             df_ediciones_final = pd.concat(
                                 [df_ediciones_actuales, filas_para_guardar],
                                 ignore_index=True,
                             ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
-
-                            columnas_hoja_ediciones = spreadsheet.worksheet(
-                                "EDICIONES_USUARIOS"
-                            ).row_values(1)
-                            df_ediciones_final = df_ediciones_final.reindex(
-                                columns=columnas_hoja_ediciones
-                            )
 
                             success = update_sheet_from_dataframe(
                                 spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final
@@ -202,10 +175,10 @@ if st.session_state["authentication_status"]:
                             if success:
                                 st.success("✅ ¡Cambios guardados con éxito!")
                                 st.cache_data.clear()
-                                del st.session_state["df_mostrado_al_usuario"]
+                                del st.session_state.df_para_editar
                                 st.rerun()
                             else:
-                                st.error("❌ Ocurrió un error al guardar los cambios.")
+                                st.error("❌ Ocurrió un error al guardar.")
                     else:
                         st.info("No se detectaron cambios para guardar.")
         else:
