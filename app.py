@@ -173,7 +173,7 @@ if st.session_state["authentication_status"]:
                     else:
                         st.info("No se detectaron cambios para guardar.")
         else:
-            st.error("No se encontraron datos en la hoja 'BD_CARGOS_COMPLETA'.")
+            st.error("No se encontraron datos en la hoja 'BD_CARGOS_COMPLETA'.  ")
     else:
         st.error("Falló la conexión con Google Sheets.")
 
