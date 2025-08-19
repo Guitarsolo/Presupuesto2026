@@ -1,0 +1,20 @@
+# Entorno Virtual de Python
+# Ignora la carpeta que contiene todas las librerías instaladas
+.venv/
+
+# Archivos compilados de Python y cachés
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archivos de configuración y secretos locales de Streamlit
+# ¡ESTA LÍNEA ES LA MÁS IMPORTANTE PARA LA SEGURIDAD!
+.streamlit/secrets.toml
+
+# Archivos de configuración de VSCode (opcional pero recomendado)
+.vscode/
+
+# Archivos del sistema operativo que a veces se crean
+.DS_Store
+Thumbs.db
