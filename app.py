@@ -56,8 +56,10 @@ if st.session_state["authentication_status"]:
 
             if not df_ediciones.empty:
                 df_ediciones["ID_SERVICIO"] = df_ediciones["ID_SERVICIO"].astype(str)
+                # Establecer índice en ambos para la actualización
                 df_a_mostrar = df_a_mostrar.set_index("ID_SERVICIO")
                 df_ediciones_filtradas = df_ediciones.set_index("ID_SERVICIO")
+                # La función update es robusta para fusionar los cambios
                 df_a_mostrar.update(df_ediciones_filtradas)
                 df_a_mostrar.reset_index(inplace=True)
 
@@ -115,55 +117,30 @@ if st.session_state["authentication_status"]:
                 key="data_editor_saf_final",
             )
 
-            # --- LÓGICA DE GUARDADO (ESTRATEGIA DE MERGE) ---
+            # --- LÓGICA DE GUARDADO (SIMPLIFICADA Y ROBUSTA) ---
             if st.button("💾 Guardar Cambios Realizados", type="primary"):
                 with st.spinner("Procesando y guardando cambios..."):
                     df_original_sesion = st.session_state["df_mostrado_al_usuario"]
 
-                    # 1. IDENTIFICAR CAMBIOS USANDO MERGE
-                    # Preparamos los DFs para la fusión
-                    df_original_sesion["ID_SERVICIO"] = df_original_sesion[
-                        "ID_SERVICIO"
-                    ].astype(str)
-                    edited_df["ID_SERVICIO"] = edited_df["ID_SERVICIO"].astype(str)
+                    # 1. IDENTIFICAR FILAS MODIFICADAS
+                    # Convertir a string para una comparación de tipos consistente
+                    df_original_sesion = df_original_sesion.astype(str)
+                    edited_df = edited_df.astype(str)
 
-                    # Fusionamos ambos DFs, una fila que no haya cambiado tendrá sus columnas _x y _y iguales.
-                    df_merged = pd.merge(
-                        df_original_sesion,
-                        edited_df,
-                        on="ID_SERVICIO",
-                        how="outer",
-                        suffixes=("_original", "_editado"),
-                    )
+                    # Encontrar las diferencias comparando las filas como un todo
+                    diff_mask = (df_original_sesion != edited_df).any(axis=1)
+                    filas_modificadas = edited_df[diff_mask]
 
-                    # 2. ENCONTRAR LAS FILAS MODIFICADAS
-                    # Una fila cambió si cualquiera de sus valores en las columnas editables es diferente.
-                    filas_modificadas = []
-                    for col in columnas_editables:
-                        # Comparamos la columna original con la editada
-                        diff = df_merged[
-                            df_merged[f"{col}_original"] != df_merged[f"{col}_editado"]
-                        ]
-                        filas_modificadas.extend(diff["ID_SERVICIO"].tolist())
-
-                    ids_modificados = list(
-                        set(filas_modificadas)
-                    )  # Obtenemos IDs únicos
-
-                    if ids_modificados:
-                        # 3. PROCEDER CON EL GUARDADO
-                        filas_para_guardar = edited_df[
-                            edited_df["ID_SERVICIO"].isin(ids_modificados)
-                        ].copy()
-
-                        if (
-                            filas_para_guardar["ESTADO"].isnull().any()
-                            or (filas_para_guardar["ESTADO"] == "").any()
-                        ):
+                    if not filas_modificadas.empty:
+                        # 2. VALIDACIÓN: Revisar 'ESTADO' solo en las filas que realmente cambiaron
+                        if filas_modificadas["ESTADO"].isin(["nan", "None", ""]).any():
                             st.error(
-                                "❌ Error de validación: Se detectaron filas modificadas donde 'ESTADO' está vacío. Complete todos los campos 'ESTADO' antes de guardar."
+                                "❌ Error de validación: Se detectaron filas modificadas donde 'ESTADO' está vacío. Por favor, complete todos los campos 'ESTADO' antes de guardar."
                             )
                         else:
+                            # 3. PROCEDER CON EL GUARDADO
+                            filas_para_guardar = filas_modificadas.copy()
+
                             filas_para_guardar["USUARIO_QUE_EDITO"] = username
                             filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
                                 tz="America/Argentina/Buenos_Aires"
@@ -173,8 +150,8 @@ if st.session_state["authentication_status"]:
                                 spreadsheet, "EDICIONES_USUARIOS"
                             )
                             if not df_ediciones_actuales.empty:
-                                df_ediciones_actuales["ID_SERVICIO"] = (
-                                    df_ediciones_actuales["ID_SERVICIO"].astype(str)
+                                df_ediciones_actuales = df_ediciones_actuales.astype(
+                                    str
                                 )
 
                             df_ediciones_final = pd.concat(
@@ -192,7 +169,7 @@ if st.session_state["authentication_status"]:
                                 del st.session_state["df_mostrado_al_usuario"]
                                 st.rerun()
                             else:
-                                st.error("❌ Ocurrió un error al guardar.")
+                                st.error("❌ Ocurrió un error al guardar los cambios.")
                     else:
                         st.info("No se detectaron cambios para guardar.")
         else:
