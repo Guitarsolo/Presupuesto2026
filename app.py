@@ -41,27 +41,32 @@ if st.session_state["authentication_status"]:
         df_ediciones = get_sheet_as_dataframe(spreadsheet, "EDICIONES_USUARIOS")
 
         if not df_original.empty:
-            # --- PREPARACIÓN Y FUSIÓN DE DATOS (MÉTODO CORREGIDO) ---
+            # --- PREPARACIÓN Y FUSIÓN DE DATOS (MÉTODO CON GUARDIA) ---
             df_saf_base = df_original[df_original["SAF"] == user_saf].copy()
-
-            # Renombrar columnas clave para consistencia interna
             df_saf_base.rename(
                 columns={"idServicioAgente": "ID_SERVICIO", "funcion": "FUNCION"},
                 inplace=True,
                 errors="ignore",
             )
             df_saf_base["ID_SERVICIO"] = df_saf_base["ID_SERVICIO"].astype(str)
-            df_a_mostrar = df_saf_base
 
-            # Si hay ediciones, las aplicamos SOBRE la base del SAF
+            df_a_mostrar = df_saf_base  # Por defecto, mostramos la base
+
+            # Solo intentar fusionar si 'df_ediciones' TIENE datos
             if not df_ediciones.empty:
-                df_ediciones["ID_SERVICIO"] = df_ediciones["ID_SERVICIO"].astype(str)
-                # Establecer el ID como índice en ambos para poder actualizar
-                df_a_mostrar.set_index("ID_SERVICIO", inplace=True)
-                df_ediciones_a_aplicar = df_ediciones.set_index("ID_SERVICIO")
-                # update() es la forma correcta de "pisar" los datos
-                df_a_mostrar.update(df_ediciones_a_aplicar)
-                df_a_mostrar.reset_index(inplace=True)
+                # La guardia que previene el KeyError
+                if "ID_SERVICIO" in df_ediciones.columns:
+                    df_ediciones["ID_SERVICIO"] = df_ediciones["ID_SERVICIO"].astype(
+                        str
+                    )
+                    df_a_mostrar.set_index("ID_SERVICIO", inplace=True)
+                    df_ediciones_a_aplicar = df_ediciones.set_index("ID_SERVICIO")
+                    df_a_mostrar.update(df_ediciones_a_aplicar)
+                    df_a_mostrar.reset_index(inplace=True)
+                else:
+                    st.warning(
+                        "Advertencia: La hoja 'EDICIONES_USUARIOS' no tiene una columna 'ID_SERVICIO'. No se pudieron cargar las ediciones previas."
+                    )
 
             df_a_mostrar = df_a_mostrar.sort_values(
                 by=["Suborganizacion", "Documento"], ignore_index=True
@@ -95,12 +100,10 @@ if st.session_state["authentication_status"]:
                 "ACTO ADMINISTRATIVO",
             ]
 
-            # Asegurar que todas las columnas editables existan
-            for col in columnas_editables:
+            columnas_visibles = columnas_bloqueadas + columnas_editables
+            for col in columnas_visibles:
                 if col not in df_a_mostrar.columns:
                     df_a_mostrar[col] = pd.NA
-
-            columnas_visibles = columnas_bloqueadas + columnas_editables
 
             # --- RENDERIZADO ---
             st.info(
@@ -115,15 +118,15 @@ if st.session_state["authentication_status"]:
                 num_rows="fixed",
                 use_container_width=True,
                 height=600,
-                key="editor_principal",
+                key="editor",
             )
 
-            # --- LÓGICA DE GUARDADO ---
+            # --- LÓGICA DE GUARDADO (se mantiene igual, es robusta) ---
             if st.button("💾 Guardar Cambios", type="primary"):
                 with st.spinner("Procesando..."):
-                    df_original_mostrado = st.session_state["df_mostrado"]
+                    df_original_sesion = st.session_state["df_mostrado"]
 
-                    df_comp_orig = df_original_mostrado.fillna("__NULL__").astype(str)
+                    df_comp_orig = df_original_sesion.fillna("__NULL__").astype(str)
                     df_comp_edit = edited_df.fillna("__NULL__").astype(str)
 
                     diff_mask = (df_comp_orig != df_comp_edit).any(axis=1)
@@ -135,9 +138,9 @@ if st.session_state["authentication_status"]:
                         filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
                             tz="America/Argentina/Buenos_Aires"
                         ).strftime("%Y-%m-%d %H:%M:%S")
-
-                        # Añadir el SAF a las filas guardadas para futura referencia
-                        filas_para_guardar["SAF"] = user_saf
+                        filas_para_guardar["SAF"] = (
+                            user_saf  # Añadir SAF para referencia
+                        )
 
                         df_ediciones_actuales = get_sheet_as_dataframe(
                             spreadsheet, "EDICIONES_USUARIOS"
