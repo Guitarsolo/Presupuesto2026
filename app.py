@@ -148,36 +148,40 @@ if st.session_state["authentication_status"]:
             )
 
             # --- LÓGICA DE GUARDADO ---
+            # --- LÓGICA DE GUARDADO (VERSIÓN CON COMPARACIÓN NORMALIZADA) ---
             if st.button("💾 Guardar Cambios Realizados", type="primary"):
-                with st.spinner("Procesando y guardando..."):
+                with st.spinner("Procesando y guardando cambios..."):
                     df_original_sesion = st.session_state["df_mostrado_al_usuario"]
 
-                    # Identificar filas modificadas con el método manual robusto
-                    indices_modificados = []
-                    for i in range(len(edited_df)):
-                        if not df_original_sesion.iloc[i].equals(edited_df.iloc[i]):
-                            indices_modificados.append(i)
+                    # --- 1. IDENTIFICAR FILAS MODIFICADAS - MÉTODO ROBUSTO ---
+                    # Convertir todo a string y rellenar nulos con un placeholder para una comparación justa
+                    df_comp_original = df_original_sesion.astype(str).fillna("__NULL__")
+                    df_comp_editado = edited_df.astype(str).fillna("__NULL__")
 
-                    if indices_modificados:
-                        filas_modificadas = edited_df.iloc[indices_modificados].copy()
+                    # Encontrar las diferencias comparando las filas como un todo
+                    diff_mask = (df_comp_original != df_comp_editado).any(axis=1)
+                    filas_modificadas = edited_df[diff_mask]
 
+                    if not filas_modificadas.empty:
+                        # 2. VALIDACIÓN PRECISA
+                        # Comprobar si en alguna de las filas realmente modificadas, el ESTADO está vacío
                         if (
                             filas_modificadas["ESTADO"].isnull().any()
                             or (filas_modificadas["ESTADO"] == "").any()
                         ):
                             st.error(
-                                "❌ Error: Se detectaron filas modificadas con 'ESTADO' vacío. Complete el campo antes de guardar."
+                                "❌ Error de validación: Se detectaron filas modificadas donde el campo 'ESTADO' está vacío. Por favor, complete todos los campos 'ESTADO' de las filas que ha editado antes de guardar."
                             )
                         else:
-                            # Preparar las filas para guardar, asegurando que tengan la estructura completa
-                            filas_para_guardar = filas_modificadas
+                            # 3. PROCEDER CON EL GUARDADO
+                            filas_para_guardar = filas_modificadas.copy()
 
                             filas_para_guardar["USUARIO_QUE_EDITO"] = username
                             filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
                                 tz="America/Argentina/Buenos_Aires"
                             ).strftime("%Y-%m-%d %H:%M:%S")
 
-                            # Actualizar el registro maestro de ediciones
+                            # 4. ACTUALIZAR EL REGISTRO
                             df_ediciones_actuales = get_sheet_as_dataframe(
                                 spreadsheet, "EDICIONES_USUARIOS"
                             )
@@ -193,7 +197,7 @@ if st.session_state["authentication_status"]:
                                 ignore_index=True,
                             ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
 
-                            # Alinear columnas antes de escribir, para máxima seguridad
+                            # Alinear columnas antes de escribir
                             columnas_hoja_destino = spreadsheet.worksheet(
                                 "EDICIONES_USUARIOS"
                             ).row_values(1)
