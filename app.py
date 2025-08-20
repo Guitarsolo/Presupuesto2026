@@ -129,34 +129,48 @@ if st.session_state["authentication_status"]:
                 key="editor",
             )
 
-            # --- LÓGICA DE GUARDADO ---
+            # --- LÓGICA DE GUARDADO (VERSIÓN FINAL CON COMPARACIÓN MANUAL) ---
             if st.button("💾 Guardar Cambios Realizados", type="primary"):
-                with st.spinner("Procesando y guardando..."):
-                    df_original_mostrado = st.session_state["df_mostrado"]
+                with st.spinner("Procesando y guardando cambios..."):
+                    df_original_sesion = st.session_state["df_mostrado_al_usuario"]
+                    df_editado = edited_df
 
-                    # Identificar cambios con el método robusto de comparación normalizada
-                    df_comp_orig = df_original_mostrado.astype(str).fillna("__NULL__")
-                    df_comp_edit = edited_df.astype(str).fillna("__NULL__")
-                    diff_mask = (df_comp_orig != df_comp_edit).any(axis=1)
-                    filas_modificadas = edited_df[diff_mask]
+                    # 1. IDENTIFICAR FILAS MODIFICADAS - MÉTODO MANUAL ROBUSTO
+                    # Este método es inmune a los errores de alineación de pandas.
+                    indices_modificados = []
 
-                    if not filas_modificadas.empty:
+                    # Primero, normalizamos ambos dataframes para una comparación justa de nulos
+                    df_comp_original = df_original_sesion.fillna("__NULL__")
+                    df_comp_editado = df_editado.fillna("__NULL__")
+
+                    # Iterar por los índices numéricos de las filas
+                    for i in range(len(df_comp_editado)):
+                        # Comparamos las dos filas como listas de valores
+                        if not df_comp_original.iloc[i].equals(df_comp_editado.iloc[i]):
+                            indices_modificados.append(i)
+
+                    if indices_modificados:
+                        # Seleccionamos las filas originales del DataFrame editado
+                        filas_modificadas = edited_df.iloc[indices_modificados].copy()
+
+                        # 2. VALIDACIÓN PRECISA
                         if (
-                            filas_modificadas["ESTADO"]
-                            .isin(["nan", "None", "", "NaT"])
-                            .any()
+                            filas_modificadas["ESTADO"].isnull().any()
+                            or (filas_modificadas["ESTADO"] == "").any()
                         ):
                             st.error(
-                                "❌ Error de validación: Se detectaron filas modificadas con 'ESTADO' vacío. Complete el campo antes de guardar."
+                                "❌ Error de validación: Se detectaron filas modificadas con 'ESTADO' vacío. Por favor, complete todos los campos 'ESTADO' de las filas que ha editado antes de guardar."
                             )
                         else:
-                            # Preparar y guardar las filas
-                            filas_para_guardar = filas_modificadas.copy()
+                            # 3. PROCEDER CON EL GUARDADO
+                            filas_para_guardar = filas_modificadas
+
                             filas_para_guardar["USUARIO_QUE_EDITO"] = username
                             filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
                                 tz="America/Argentina/Buenos_Aires"
                             ).strftime("%Y-%m-%d %H:%M:%S")
 
+                            # 4. ACTUALIZAR EL REGISTRO
                             df_ediciones_actuales = get_sheet_as_dataframe(
                                 spreadsheet, "EDICIONES_USUARIOS"
                             )
@@ -172,12 +186,18 @@ if st.session_state["authentication_status"]:
                                 ignore_index=True,
                             ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
 
-                            columnas_hoja_destino = spreadsheet.worksheet(
-                                "EDICIONES_USUARIOS"
-                            ).row_values(1)
-                            df_ediciones_final = df_ediciones_final.reindex(
-                                columns=columnas_hoja_destino
-                            )
+                            # Alinear columnas antes de escribir
+                            try:
+                                columnas_hoja_destino = spreadsheet.worksheet(
+                                    "EDICIONES_USUARIOS"
+                                ).row_values(1)
+                                df_ediciones_final = df_ediciones_final.reindex(
+                                    columns=columnas_hoja_destino
+                                )
+                            except Exception as e:
+                                st.warning(
+                                    f"No se pudo alinear con las columnas de destino. Error: {e}"
+                                )
 
                             success = update_sheet_from_dataframe(
                                 spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final
@@ -186,10 +206,10 @@ if st.session_state["authentication_status"]:
                             if success:
                                 st.success("✅ ¡Cambios guardados con éxito!")
                                 st.cache_data.clear()
-                                del st.session_state["df_mostrado"]
+                                del st.session_state["df_mostrado_al_usuario"]
                                 st.rerun()
                             else:
-                                st.error("❌ Ocurrió un error al guardar.")
+                                st.error("❌ Ocurrió un error al guardar los cambios.")
                     else:
                         st.info("No se detectaron cambios para guardar.")
         else:
