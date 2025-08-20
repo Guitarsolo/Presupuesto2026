@@ -49,30 +49,24 @@ if st.session_state["authentication_status"]:
                 errors="ignore",
             )
             df_saf_base["ID_SERVICIO"] = df_saf_base["ID_SERVICIO"].astype(str)
+            df_a_mostrar = df_saf_base.copy()
 
             if not df_ediciones.empty:
                 df_ediciones["ID_SERVICIO"] = df_ediciones["ID_SERVICIO"].astype(str)
-                # Seleccionar solo ediciones relevantes para una fusión más limpia
                 df_ediciones_saf = df_ediciones[df_ediciones["SAF"] == user_saf]
-
-                # Unimos el DF base con las ediciones del SAF actual
                 df_a_mostrar = pd.merge(
-                    df_saf_base,
+                    df_a_mostrar,
                     df_ediciones_saf,
                     on="ID_SERVICIO",
                     how="left",
                     suffixes=("", "_edicion"),
                 )
-
-                # Para cada columna editable, si hay una versión "_edicion", la usamos. Si no, mantenemos la original.
-                for col in df_ediciones.columns:
+                for col in df_ediciones_saf.columns:
                     if f"{col}_edicion" in df_a_mostrar.columns:
                         df_a_mostrar[col] = df_a_mostrar[f"{col}_edicion"].fillna(
                             df_a_mostrar[col]
                         )
                         df_a_mostrar.drop(columns=[f"{col}_edicion"], inplace=True)
-            else:
-                df_a_mostrar = df_saf_base
 
             df_a_mostrar = df_a_mostrar.sort_values(
                 by=["Suborganizacion", "Documento"], ignore_index=True
@@ -113,12 +107,11 @@ if st.session_state["authentication_status"]:
 
             # --- RENDERIZADO ---
             st.info(
-                "Edite directamente en la tabla. El campo 'ESTADO' es obligatorio al modificar una fila."
+                "Edite directamente en la tabla. Recuerde completar el campo 'ESTADO' en las filas que modifique."
             )
 
-            # ★★★ LÍNEA CORREGIDA ★★★
-            # Aseguramos usar el mismo nombre de clave de sesión en ambos lugares
-            st.session_state["df_mostrado_al_usuario"] = df_a_mostrar.copy()
+            if "df_mostrado_al_usuario" not in st.session_state:
+                st.session_state["df_mostrado_al_usuario"] = df_a_mostrar.copy()
 
             edited_df = st.data_editor(
                 df_a_mostrar[columnas_visibles],
@@ -129,7 +122,7 @@ if st.session_state["authentication_status"]:
                 key="editor",
             )
 
-            # --- LÓGICA DE GUARDADO ---
+            # --- LÓGICA DE GUARDADO (SIMPLIFICADA) ---
             if st.button("💾 Guardar Cambios Realizados", type="primary"):
                 with st.spinner("Procesando y guardando cambios..."):
                     df_original_sesion = st.session_state["df_mostrado_al_usuario"]
@@ -145,57 +138,46 @@ if st.session_state["authentication_status"]:
                     if indices_modificados:
                         filas_modificadas = edited_df.iloc[indices_modificados].copy()
 
-                        if (
-                            filas_modificadas["ESTADO"].isnull().any()
-                            or (filas_modificadas["ESTADO"] == "").any()
-                        ):
-                            st.error(
-                                "❌ Error de validación: Se detectaron filas modificadas con 'ESTADO' vacío."
-                            )
+                        # --- SE ELIMINÓ EL BLOQUE DE VALIDACIÓN DE 'ESTADO' ---
+
+                        filas_para_guardar = filas_modificadas
+
+                        filas_para_guardar["USUARIO_QUE_EDITO"] = username
+                        filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
+                            tz="America/Argentina/Buenos_Aires"
+                        ).strftime("%Y-%m-%d %H:%M:%S")
+
+                        df_ediciones_actuales = get_sheet_as_dataframe(
+                            spreadsheet, "EDICIONES_USUARIOS"
+                        )
+                        if not df_ediciones_actuales.empty:
+                            df_ediciones_actuales = df_ediciones_actuales.astype(str)
+
+                        filas_para_guardar = filas_para_guardar.astype(str)
+
+                        df_ediciones_final = pd.concat(
+                            [df_ediciones_actuales, filas_para_guardar],
+                            ignore_index=True,
+                        ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
+
+                        columnas_hoja_destino = spreadsheet.worksheet(
+                            "EDICIONES_USUARIOS"
+                        ).row_values(1)
+                        df_ediciones_final = df_ediciones_final.reindex(
+                            columns=columnas_hoja_destino
+                        )
+
+                        success = update_sheet_from_dataframe(
+                            spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final
+                        )
+
+                        if success:
+                            st.success("✅ ¡Cambios guardados con éxito!")
+                            st.cache_data.clear()
+                            del st.session_state["df_mostrado_al_usuario"]
+                            st.rerun()
                         else:
-                            # Preparar las "fotos completas" de las filas modificadas para guardar
-                            filas_para_guardar = filas_modificadas
-
-                            filas_para_guardar["USUARIO_QUE_EDITO"] = username
-                            filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
-                                tz="America/Argentina/Buenos_Aires"
-                            ).strftime("%Y-%m-%d %H:%M:%S")
-
-                            # Actualizar el registro maestro de ediciones
-                            df_ediciones_actuales = get_sheet_as_dataframe(
-                                spreadsheet, "EDICIONES_USUARIOS"
-                            )
-                            if not df_ediciones_actuales.empty:
-                                df_ediciones_actuales = df_ediciones_actuales.astype(
-                                    str
-                                )
-
-                            filas_para_guardar = filas_para_guardar.astype(str)
-
-                            df_ediciones_final = pd.concat(
-                                [df_ediciones_actuales, filas_para_guardar],
-                                ignore_index=True,
-                            ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
-
-                            # Alinear columnas con la hoja de destino
-                            columnas_hoja_destino = spreadsheet.worksheet(
-                                "EDICIONES_USUARIOS"
-                            ).row_values(1)
-                            df_ediciones_final = df_ediciones_final.reindex(
-                                columns=columnas_hoja_destino
-                            )
-
-                            success = update_sheet_from_dataframe(
-                                spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final
-                            )
-
-                            if success:
-                                st.success("✅ ¡Cambios guardados con éxito!")
-                                st.cache_data.clear()
-                                del st.session_state["df_mostrado_al_usuario"]
-                                st.rerun()
-                            else:
-                                st.error("❌ Ocurrió un error al guardar los cambios.")
+                            st.error("❌ Ocurrió un error al guardar los cambios.")
                     else:
                         st.info("No se detectaron cambios para guardar.")
         else:
