@@ -9,14 +9,13 @@ from google_sheets_connector import (
     update_sheet_from_dataframe,
 )
 
-# --- CONFIGURACIÓN DE PÁGINA Y TÍTULO ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(layout="wide", page_title="App Presupuesto RRHH")
 st.title("Sistema de Carga de Presupuesto RRHH 2026")
 
-# --- 1. AUTENTICACIÓN ---
+# --- AUTENTICACIÓN ---
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
-
 authenticator = stauth.Authenticate(
     config["credentials"],
     config["cookie"]["name"],
@@ -25,7 +24,7 @@ authenticator = stauth.Authenticate(
 )
 authenticator.login("main")
 
-# --- 2. LÓGICA DE LA APLICACIÓN POST-LOGIN ---
+# --- LÓGICA DE LA APLICACIÓN ---
 if st.session_state["authentication_status"]:
     name = st.session_state["name"]
     username = st.session_state["username"]
@@ -41,80 +40,75 @@ if st.session_state["authentication_status"]:
         df_ediciones = get_sheet_as_dataframe(spreadsheet, "EDICIONES_USUARIOS")
 
         if not df_original.empty:
-            # --- PREPARACIÓN Y FUSIÓN DE DATOS ---
+            # --- LÓGICA DE FUSIÓN (ROBUSTA) ---
             df_saf_base = df_original[df_original["SAF"] == user_saf].copy()
-            df_saf_base.rename(
-                columns={"idServicioAgente": "ID_SERVICIO", "funcion": "FUNCION"},
-                inplace=True,
-                errors="ignore",
-            )
+
+            # Estandarizar nombres de columnas clave al cargar
+            df_saf_base.columns = [
+                col.upper().replace(" ", "_") for col in df_saf_base.columns
+            ]
+            df_ediciones.columns = [
+                col.upper().replace(" ", "_") for col in df_ediciones.columns
+            ]
+
             df_saf_base["ID_SERVICIO"] = df_saf_base["ID_SERVICIO"].astype(str)
             df_a_mostrar = df_saf_base.copy()
 
             if not df_ediciones.empty:
                 df_ediciones["ID_SERVICIO"] = df_ediciones["ID_SERVICIO"].astype(str)
-                df_ediciones_saf = df_ediciones[df_ediciones["SAF"] == user_saf]
-                df_a_mostrar = pd.merge(
-                    df_a_mostrar,
-                    df_ediciones_saf,
-                    on="ID_SERVICIO",
-                    how="left",
-                    suffixes=("", "_edicion"),
-                )
-                for col in df_ediciones_saf.columns:
-                    if f"{col}_edicion" in df_a_mostrar.columns:
-                        df_a_mostrar[col] = df_a_mostrar[f"{col}_edicion"].fillna(
-                            df_a_mostrar[col]
-                        )
-                        df_a_mostrar.drop(columns=[f"{col}_edicion"], inplace=True)
+                df_a_mostrar = df_a_mostrar.set_index("ID_SERVICIO")
+                df_ediciones_filtradas = df_ediciones[
+                    df_ediciones["SAF"] == user_saf
+                ].set_index("ID_SERVICIO")
+                df_a_mostrar.update(df_ediciones_filtradas)
+                df_a_mostrar.reset_index(inplace=True)
 
             df_a_mostrar = df_a_mostrar.sort_values(
-                by=["Suborganizacion", "Documento"], ignore_index=True
+                by=["SUBORGANIZACION", "DOCUMENTO"], ignore_index=True
             )
 
             # --- DEFINICIÓN DE LA INTERFAZ ---
             columnas_bloqueadas = [
-                "Documento",
-                "Nombres",
-                "Suborganizacion",
+                "DOCUMENTO",
+                "NOMBRES",
+                "SUBORGANIZACION",
                 "ID_SERVICIO",
-                "cargo",
-                "Agrupamiento",
-                "SituacionRevista",
+                "CARGO",
+                "AGRUPAMIENTO",
+                "SITUACIONREVISTA",
                 "FUNCION",
-                "SituacionLaboral",
+                "SITUACIONLABORAL",
                 "FORMULARIOS_F4",
             ]
             columnas_editables = [
                 "ESTADO",
-                "ORGANISMO ORIGEN ACTUALIZADO",
-                "ADSCRIPTO A OTRO",
-                "ORGANISMO DESTINO DE ADSCRIPTO",
-                "CARGO SUBROGANTE",
-                "CATEGORIA QUE SUBROGA",
-                "AGENTE AFECTADO A OTRO",
-                "ORGANISMO DESTINO DEL AGENTE AFECTADO",
-                "AGENTE AFECTADO DE OTRO",
-                "ORGANISMO ORIGEN DEL AGENTE AFECTADO (DE DONDE VIENE)",
-                "ACOGIDO A RETIRO VOLUNTARIO",
-                "ACTO ADMINISTRATIVO",
+                "ORGANISMO_ORIGEN_ACTUALIZADO",
+                "ADSCRIPTO_A_OTRO",
+                "ORGANISMO_DESTINO_DE_ADSCRIPTO",
+                "CARGO_SUBROGANTE",
+                "CATEGORIA_QUE_SUBROGA",
+                "AGENTE_AFECTADO_A_OTRO",
+                "ORGANISMO_DESTINO_DEL_AGENTE_AFECTADO",
+                "AGENTE_AFECTADO_DE_OTRO",
+                "ORGANISMO_ORIGEN_DEL_AGENTE_AFECTADO_(DE_DONDE_VIENE)",
+                "ACOGIDO_A_RETIRO_VOLUNTARIO",
+                "ACTO_ADMINISTRATIVO",
             ]
 
-            columnas_visibles = columnas_bloqueadas + columnas_editables
-            for col in columnas_visibles:
+            # Asegurar que las columnas existan
+            for col in columnas_bloqueadas + columnas_editables:
                 if col not in df_a_mostrar.columns:
                     df_a_mostrar[col] = pd.NA
 
             # --- RENDERIZADO ---
             st.info(
-                "Edite directamente en la tabla. Recuerde completar el campo 'ESTADO' en las filas que modifique."
+                "Edite en la tabla. Las filas modificadas se guardarán al presionar el botón."
             )
-
-            if "df_mostrado_al_usuario" not in st.session_state:
-                st.session_state["df_mostrado_al_usuario"] = df_a_mostrar.copy()
+            if "df_mostrado" not in st.session_state:
+                st.session_state.df_mostrado = df_a_mostrar.copy()
 
             edited_df = st.data_editor(
-                df_a_mostrar[columnas_visibles],
+                df_a_mostrar,
                 disabled=columnas_bloqueadas,
                 num_rows="fixed",
                 use_container_width=True,
@@ -122,71 +116,70 @@ if st.session_state["authentication_status"]:
                 key="editor",
             )
 
-            # --- LÓGICA DE GUARDADO (SIMPLIFICADA) ---
-            if st.button("💾 Guardar Cambios Realizados", type="primary"):
-                with st.spinner("Procesando y guardando cambios..."):
-                    df_original_sesion = st.session_state["df_mostrado_al_usuario"]
+            # --- LÓGICA DE GUARDADO ---
+            if st.button("💾 Guardar Cambios", type="primary"):
+                with st.spinner("Procesando..."):
+                    df_original_sesion = st.session_state.df_mostrado
 
-                    indices_modificados = []
-                    df_comp_original = df_original_sesion.fillna("__NULL__").astype(str)
-                    df_comp_editado = edited_df.fillna("__NULL__").astype(str)
+                    # Estandarizar también el DF editado
+                    edited_df.columns = [
+                        col.upper().replace(" ", "_") for col in edited_df.columns
+                    ]
 
-                    for i in range(len(df_comp_editado)):
-                        if not df_comp_original.iloc[i].equals(df_comp_editado.iloc[i]):
-                            indices_modificados.append(i)
+                    # Comparar valores como strings para evitar errores de tipo
+                    df_comp_orig = df_original_sesion.fillna("__NULL__").astype(str)
+                    df_comp_edit = edited_df.fillna("__NULL__").astype(str)
 
-                    if indices_modificados:
-                        filas_modificadas = edited_df.iloc[indices_modificados].copy()
+                    diff_mask = (df_comp_orig != df_comp_edit).any(axis=1)
+                    filas_modificadas = edited_df[diff_mask]
 
-                        # --- SE ELIMINÓ EL BLOQUE DE VALIDACIÓN DE 'ESTADO' ---
-
-                        filas_para_guardar = filas_modificadas
-
+                    if not filas_modificadas.empty:
+                        filas_para_guardar = filas_modificadas.copy()
                         filas_para_guardar["USUARIO_QUE_EDITO"] = username
                         filas_para_guardar["FECHA_DE_EDICION"] = pd.Timestamp.now(
                             tz="America/Argentina/Buenos_Aires"
                         ).strftime("%Y-%m-%d %H:%M:%S")
 
+                        # Guardar de vuelta en EDICIONES_USUARIOS
                         df_ediciones_actuales = get_sheet_as_dataframe(
                             spreadsheet, "EDICIONES_USUARIOS"
                         )
-                        if not df_ediciones_actuales.empty:
-                            df_ediciones_actuales = df_ediciones_actuales.astype(str)
-
-                        filas_para_guardar = filas_para_guardar.astype(str)
+                        df_ediciones_actuales.columns = [
+                            col.upper().replace(" ", "_")
+                            for col in df_ediciones_actuales.columns
+                        ]
 
                         df_ediciones_final = pd.concat(
                             [df_ediciones_actuales, filas_para_guardar],
                             ignore_index=True,
                         ).drop_duplicates(subset=["ID_SERVICIO"], keep="last")
 
-                        columnas_hoja_destino = spreadsheet.worksheet(
+                        # Es importante devolver los nombres a su formato original antes de guardar
+                        hoja_destino_cols_originales = spreadsheet.worksheet(
                             "EDICIONES_USUARIOS"
                         ).row_values(1)
-                        df_ediciones_final = df_ediciones_final.reindex(
-                            columns=columnas_hoja_destino
-                        )
+                        df_ediciones_final.columns = hoja_destino_cols_originales
 
                         success = update_sheet_from_dataframe(
                             spreadsheet, "EDICIONES_USUARIOS", df_ediciones_final
                         )
 
                         if success:
-                            st.success("✅ ¡Cambios guardados con éxito!")
+                            st.success("✅ ¡Cambios guardados!")
                             st.cache_data.clear()
-                            del st.session_state["df_mostrado_al_usuario"]
+                            del st.session_state.df_mostrado
                             st.rerun()
                         else:
-                            st.error("❌ Ocurrió un error al guardar los cambios.")
+                            st.error("❌ Ocurrió un error al guardar.")
                     else:
                         st.info("No se detectaron cambios para guardar.")
         else:
-            st.error("No se encontraron datos en la hoja 'BD_CARGOS_COMPLETA'.")
+            st.error("No se encontraron datos en 'BD_CARGOS_COMPLETA'.")
     else:
         st.error("Falló la conexión con Google Sheets.")
 
-# --- Manejo de casos de autenticación fallida o pendiente ---
+# --- Manejo de errores de autenticación ---
 elif st.session_state["authentication_status"] is False:
-    st.error("Usuario o contraseña incorrecto.")
+    st.error("Usuario/contraseña incorrecto.")
 elif st.session_state["authentication_status"] is None:
-    st.warning("Por favor, ingrese su usuario y contraseña para continuar.")
+    st.warning("Ingrese su usuario y contraseña.")
